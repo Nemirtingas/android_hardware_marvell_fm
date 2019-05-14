@@ -68,45 +68,12 @@ enum RDS_TYPE
     RTDATA = 0x02, // the radio text
 };
 
-struct fmRDSEvent_t
-{
-      int32_t fmEvent;
-      uint16_t piCode;
-      uint8_t pType;
-      int8_t psData;
-      int8_t field_8;
-      int8_t field_9;
-      char field_A;
-      char field_B;
-      char field_C;
-      char field_D;
-      char field_E;
-      char field_F;
-      char serviceName[MAX_PS_LEN+1];
-      char radioText[MAX_RT_LEN+1];
-};
-
-struct fmEvent_t 
-{
-    union
-    {
-        fmRDSEvent_t rdsEvent;
-    };
-};
-
 static struct
 {
     int8_t type;
     char ps[MAX_PS_LEN+1];
     char rt[MAX_RT_LEN+1];
 } rdsData;
-
-void setup_cond_timeout(struct timespec &cond_timeout, uint32_t usleep)
-{
-    clock_gettime(CLOCK_REALTIME, &cond_timeout);
-    cond_timeout.tv_sec += usleep/1000000;
-    cond_timeout.tv_nsec += (usleep % 1000000) * 1000;
-}
 
 int RemoveBlank(char *str, int len)
 {
@@ -164,11 +131,11 @@ int rdslistener_callback(fmEvent_t const *event, void *_param)
     {
         if ( event->rdsEvent.fmEvent == RDS_EVENT )
         {
-            FMRadio_SetRDSData(&event->rdsEvent);
+            FMRadio_SetRDSData(const_cast<fmRDSEvent_t*>(&event->rdsEvent));
         }
         else
         {
-            ALOGI("rdslistener_callback() : received an unknown event (%d)!\n", event->fmEvent);
+            ALOGI("rdslistener_callback() : received an unknown event (%d)!\n", event->rdsEvent.fmEvent);
         }
         result = FM_SUCCESS;
     }
@@ -180,13 +147,13 @@ int rdslistener_callback(fmEvent_t const *event, void *_param)
     return result;
 }
 
-int aflistener_callback(void* _data, void *_param)
+int aflistener_callback(void* _data)
 {
     ALOGE("FM %s in", __func__);
     return FM_SUCCESS;
 }
 
-int exceptionlistener_callback(void* _data, void *_param)
+int exceptionlistener_callback(void* _data)
 {
     ALOGE("FM %s in", __func__);
     return FM_SUCCESS;
@@ -195,20 +162,18 @@ int exceptionlistener_callback(void* _data, void *_param)
 //Reset all variables to default value
 //static FmIoctlsInterface * FmIoct;
 
-FmRadioController::FmRadioController()
+FmRadioController::FmRadioController():
+    radio_name(MAX_PS_LEN+1, 0),
+    radio_text(MAX_RT_LEN+1, 0)
 {
     cur_fm_state = FM_OFF;
     prev_freq = -1;
     seek_scan_canceled = false;
-    is_seeking = false;
     af_enabled = 0;
     rds_enabled = 0;
-    event_listener_canceled = false;
-    is_rds_support = false;
+    is_rds_support = true;
     is_af_jump_received = false;
     mutex_fm_state = PTHREAD_MUTEX_INITIALIZER;
-    event_listener_thread = 0;
-    fd_driver = -1;
     processing_rds = false;
 
     LoadSoftMuteControl();
@@ -238,7 +203,7 @@ void FmRadioController::LoadSoftMuteControl()
 
 int FmRadioController::Pwr_Up(int freq)
 {
-    if( cur_fm_state == FM_ON || cur_fm_state == FM_TUNE_IN_PROGRESS || cur_fm_state == SCAN_IN_PROGRESS )
+    if( cur_fm_state == FM_ON || cur_fm_state == FM_TUNE_IN_PROGRESS || cur_fm_state == FM_SCAN_IN_PROGRESS )
         return FM_SUCCESS;
 
     if( cur_fm_state == FM_OFF_IN_PROGRESS || cur_fm_state == FM_ON_IN_PROGRESS )
@@ -324,6 +289,9 @@ long FmRadioController :: GetChannel(void)
 {
     uint32_t freq = FM_FAILURE;
 
+    if( cur_fm_state != FM_ON )
+        return FM_FAILURE;
+
     if( FMSequence_GetChannel(&freq) )
     {
         ALOGI("current channel read failed");
@@ -341,10 +309,7 @@ long FmRadioController :: GetChannel(void)
 int FmRadioController::TuneChannel(long freq)
 {
     if( cur_fm_state != FM_ON )
-    {
-        ALOGE("%s: FM is not enabled", __func__);
         return FM_FAILURE;
-    }
 
     uint32_t freq_set;
     set_fm_state(FM_TUNE_IN_PROGRESS);
@@ -383,9 +348,12 @@ int FmRadioController::Seek(int dir)
     uint32_t new_freq;
     int res;
 
-    is_seeking = true;
+    if( cur_fm_state != FM_ON )
+        return FM_FAILURE;
+
+    set_fm_state(FM_SEEK_IN_PROGRESS);
     res = (dir ? FMSequence_GetNext(&new_freq) : FMSequence_GetPrev(&new_freq) );
-    is_seeking = false;
+    set_fm_state(FM_ON);
 
     ClearRDSData();
     if( seek_scan_canceled )
@@ -426,11 +394,11 @@ int FmRadioController::Seek(int dir)
 int FmRadioController :: Stop_Scan_Seek()
 {
     seek_scan_canceled = true;
-    if( is_seeking )
+    if( cur_fm_state == FM_SEEK_IN_PROGRESS ||
+        cur_fm_state == FM_SCAN_IN_PROGRESS )
     {
         int seeking;
         FMSequence_StopScan(1, &seeking);
-        is_seeking = seeking;
         for( int i = 0; i < 100; ++i )
         {
             usleep(10000);
@@ -462,6 +430,8 @@ int FmRadioController :: Set_mute(bool mute)
 //Set regional band
 int FmRadioController :: SetBand(long band)
 {
+    if( cur_fm_state != FM_ON )
+        return FM_FAILURE;
     if( band > MAX_STATE_BAND || band < 0 ) band = DEFAULT_BAND;
     return FMSequence_SetBand(frequencies_band[band][BAND_LOW], frequencies_band[band][BAND_HIGH]);
 }
@@ -469,6 +439,8 @@ int FmRadioController :: SetBand(long band)
 //set spacing for successive channels
 int FmRadioController :: SetChannelSpacing(long spacing)
 {
+    if( cur_fm_state != FM_ON )
+        return FM_FAILURE;
     return FMSequence_SetChannelStepSize(spacing);
 }
 
@@ -521,8 +493,7 @@ int FmRadioController :: DisableAF(void)
 
 bool FmRadioController::IsRds_support(void)
 {
-    is_rds_support = true;
-    return is_rds_support;
+    return true;
 }
 
 int FmRadioController::open_dev()
@@ -551,40 +522,36 @@ int FmRadioController :: Get_AF_freq(uint16_t *ret_freq)
 int FmRadioController::ReadRDS()
 {
     int ret = 0;
-    // If we are not processing rds and the callback thread is receiving it, then let's go!
-    if( !processing_rds )
+    if( cur_fm_state != FM_OFF && cur_fm_state != FM_OFF_IN_PROGRESS )
     {
-        processing_rds = true;
-        std::string tmp_name, tmp_text;
-
-        pthread_mutex_lock(&using_rdsData);
-
-        ALOGE("HERE rdsData.type = %d, ps = %s, rt = %s", (int)rdsData.type, rdsData.ps, rdsData.rt);
-        if( rdsData.type & PSDATA )
+        // If we are not processing rds
+        if( !processing_rds )
         {
-            is_ps_event_received = true;
-            tmp_name = rdsData.ps;
-        }
-        if( rdsData.type & RTDATA )
-        {
-            is_rt_event_received = true;
-            tmp_text = rdsData.rt;
-        }
+            processing_rds = true;
+            pthread_mutex_lock(&using_rdsData);
 
-        pthread_mutex_unlock(&using_rdsData);
+            if( rdsData.type & PSDATA )
+            {
+                if( radio_name != rdsData.ps )
+                {
+                    radio_name = rdsData.ps;
+                    ret |= RDS_EVT_PS_UPDATE;
+                    is_ps_event_received = true;
+                }
+            }
+            if( rdsData.type & RTDATA )
+            {
+                if( radio_text != rdsData.rt )
+                {
+                    radio_text = rdsData.rt;
+                    ret |= RDS_EVT_RT_UPDATE;
+                    is_rt_event_received = true;
+                }
+            }
 
-        if( radio_name != tmp_name )
-        {
-            ret |= RDS_EVT_PS_UPDATE;
-            radio_name = std::move(tmp_name);
+            pthread_mutex_unlock(&using_rdsData);
+            processing_rds = false;
         }
-        if( radio_text != tmp_text )
-        {
-            ret |= RDS_EVT_RT_UPDATE;
-            radio_text = std::move(tmp_text);
-        }
-
-        processing_rds = false;
     }
 
     return ret;
@@ -618,12 +585,18 @@ int FmRadioController :: Get_rt(char *rt, int *rt_len)
 
 int FmRadioController :: SetStereo()
 {
-    return FMSequence_SetMonoAudioMode(0);
+    if( cur_fm_state == FM_ON )
+        return FMSequence_SetMonoAudioMode(0);
+    else
+        return FM_FAILURE;
 }
 
 int FmRadioController :: SetMono()
 {
-    return FMSequence_SetMonoAudioMode(1);
+    if( cur_fm_state == FM_ON )
+        return FMSequence_SetMonoAudioMode(1);
+    else
+        return FM_FAILURE;
 }
 
 //Emphasis:
@@ -632,13 +605,59 @@ int FmRadioController :: SetMono()
 //on failure
 int FmRadioController::SetDeConstant(long emphasis)
 {
-    return FMSequence_SetDemphasis(emphasis);
+    if( cur_fm_state == FM_ON )
+        return FMSequence_SetDemphasis(emphasis);
+    else
+        return FM_FAILURE;
 }
 
 int FmRadioController::ScanList(uint16_t *scan_tbl, int *max_cnt)
 {
-    *max_cnt = 0;
-    return FM_SUCCESS;
+    int res = FM_FAILURE;
+
+    if( cur_fm_state == FM_ON )
+    {
+        int freq;
+        uint16_t strength;
+        int cnt = 0;
+        set_fm_state(FM_SCAN_IN_PROGRESS);
+
+        for( int i = 0; i < *max_cnt; ++i )
+        {
+            if( seek_scan_canceled )
+            {
+                seek_scan_canceled = false;
+                break;
+            }
+
+            res = FMSequence_ScanSearchSynchronous(&freq, &strength);
+
+            if( res != FM_SUCCESS )
+                break;
+
+            // No more station
+            if( !freq )
+            {
+                res = FM_SUCCESS;
+                break;
+            }
+
+            if( freq >= LOW_BAND && freq <= HIGH_BAND )
+            {
+                ALOGI("FM Found freq %d", freq);
+                scan_tbl[cnt++] = freq/SRCH_DIV;
+            }
+        }
+        *max_cnt = cnt;
+        set_fm_state(FM_ON);
+    }
+    else
+    {
+        *max_cnt = 0;
+        *scan_tbl = 0;
+    }
+
+    return res;
 }
 
 //////////////////////////////////////////////////////////////////
@@ -647,13 +666,6 @@ int FmRadioController::ScanList(uint16_t *scan_tbl, int *max_cnt)
 //////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////
-
-struct timespec FmRadioController :: set_time_out(int secs)
-{
-    struct timespec ts = {0};
-
-    return ts;
-}
 
 int FmRadioController::GetStationList(uint16_t *scan_tbl, int *max_cnt)
 {

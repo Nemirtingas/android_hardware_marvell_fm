@@ -12,9 +12,36 @@ enum FM_EVENTS
     RDS_EVENT = 0x04,
 };
 
-typedef int(*event_callback)(void*, void*);
+struct fmRDSEvent_t
+{
+      int32_t fmEvent;
+      uint16_t piCode;
+      uint8_t pType;
+      int8_t psData;
+      int8_t rtData;
+      int8_t field_9;
+      char field_A;
+      char field_B;
+      char field_C;
+      char field_D;
+      char field_E;
+      char field_F;
+      char serviceName[MAX_PS_LEN+1];
+      char radioText[MAX_RT_LEN+1];
+};
 
-int FMSequence_Enable(int freq, event_callback rdslistener, event_callback aflistener, event_callback exeptionlistener);
+struct fmEvent_t 
+{
+    union
+    {
+        fmRDSEvent_t rdsEvent;
+    };
+};
+
+typedef int(*rdsevent_callback)(fmEvent_t const*, void*);
+typedef int(*event_callback)(void*);
+
+int FMSequence_Enable(int freq, rdsevent_callback rdslistener, event_callback aflistener, event_callback exeptionlistener);
 int FMSequence_Disable();
 
 int FMSequence_SetSoftMute(uint8_t attenuation, uint8_t threshold, int mute);
@@ -25,8 +52,8 @@ int FMSequence_GetChannel(uint32_t *freq);
 int FMSequence_EnableAf(int enable);
 int FMSequence_EnableRds(int enable);
 
-int FMSequence_ScanSearch(int *x);
-int FMSequence_ScanSearchSynchronous(int *x, uint16_t *y);
+int FMSequence_ScanSearch(int *freq);
+int FMSequence_ScanSearchSynchronous(int *freq, uint16_t *strength);
 int FMSequence_StopScan(int stop, int *seeking);
 
 int FMSequence_GetNext(uint32_t *freq);

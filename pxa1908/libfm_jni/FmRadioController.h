@@ -41,16 +41,12 @@ class FmRadioController
         int cur_fm_state;
         long int prev_freq;
         bool seek_scan_canceled;
-        bool is_seeking;
         bool is_rds_support;
         bool is_ps_event_received = false;
         bool is_rt_event_received = false;
         bool is_af_jump_received = false;
-        bool event_listener_canceled;
         pthread_mutex_t mutex_fm_state;
         char rds_enabled;
-        int fd_driver;
-        pthread_t event_listener_thread;
         bool processing_rds;
 
         std::string radio_name;
@@ -60,9 +56,6 @@ class FmRadioController
         void ClearRDSData();
         void set_fm_state(int state);
         int get_fm_state(void);
-        int SetRdsGrpMask(int mask);
-        int SetRdsGrpProcessing(int grps);
-        struct timespec set_time_out(int secs);
         int GetStationList(uint16_t *scan_tbl, int *max_cnt);
 
         int EnableRDS(void);
