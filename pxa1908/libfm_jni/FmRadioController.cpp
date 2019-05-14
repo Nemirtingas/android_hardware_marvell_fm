@@ -68,26 +68,30 @@ enum RDS_TYPE
     RTDATA = 0x02, // the radio text
 };
 
-struct fmhal_data
+struct fmRDSEvent_t
 {
-    int32_t fmEvent;
-    uint16_t piCode;
-    uint8_t pType;
-    int8_t psData;
-    int8_t rtData;
-    char field_9;
-    char field_A;
-    char field_B;
-    char field_C;
-    char field_D;
-    char field_E;
-    char field_F;
-    char serviceName[MAX_PS_LEN+1];
-    char radioText[MAX_RT_LEN+1];
-    char gap159[3];
-    int afNumChan;
-    char gap160[48];
-    char field_190;
+      int32_t fmEvent;
+      uint16_t piCode;
+      uint8_t pType;
+      int8_t psData;
+      int8_t field_8;
+      int8_t field_9;
+      char field_A;
+      char field_B;
+      char field_C;
+      char field_D;
+      char field_E;
+      char field_F;
+      char serviceName[MAX_PS_LEN+1];
+      char radioText[MAX_RT_LEN+1];
+};
+
+struct fmEvent_t 
+{
+    union
+    {
+        fmRDSEvent_t rdsEvent;
+    };
 };
 
 static struct
@@ -96,18 +100,6 @@ static struct
     char ps[MAX_PS_LEN+1];
     char rt[MAX_RT_LEN+1];
 } rdsData;
-
-void dump_rdsdata(fmhal_data *data)
-{
-    ALOGE("HERE_DUMP: fmEvent=%x", data->fmEvent);
-    ALOGE("HERE_DUMP:  piCode=%x", data->piCode);
-    ALOGE("HERE_DUMP:   pType=%x", data->pType);
-    ALOGE("HERE_DUMP:  psData=%x", (int)data->psData);
-    ALOGE("HERE_DUMP:  rtData=%x", (int)data->rtData);
-    ALOGE("HERE_DUMP: srvName=\"%s\"", data->serviceName);
-    ALOGE("HERE_DUMP: radioTx=\"%s\"", data->radioText);
-    ALOGE("HERE_DUMP: afNumCh=%x", data->afNumChan);
-}
 
 void setup_cond_timeout(struct timespec &cond_timeout, uint32_t usleep)
 {
@@ -132,7 +124,7 @@ int RemoveBlank(char *str, int len)
 
 pthread_mutex_t using_rdsData = PTHREAD_MUTEX_INITIALIZER;
 
-void FMRadio_SetRDSData(fmhal_data* data)
+void FMRadio_SetRDSData(fmRDSEvent_t* data)
 {
     int name_len;
 
@@ -143,9 +135,8 @@ void FMRadio_SetRDSData(fmhal_data* data)
 
         if( data->psData && data->serviceName[0] )
         {
-            ALOGE("HERE THREAD ServiceName = %s", data->serviceName);
             name_len = RemoveBlank(data->serviceName, MAX_PS_LEN);
-            if( name_len  )
+            if( name_len )
             {
                 rdsData.type |= PSDATA;
                 strncpy(rdsData.ps, data->serviceName, name_len);
@@ -153,7 +144,6 @@ void FMRadio_SetRDSData(fmhal_data* data)
         }
         if( data->rtData && data->radioText[0] )
         {
-            ALOGE("HERE THREAD RadioText = %s", data->radioText);
             name_len = RemoveBlank(data->radioText, MAX_RT_LEN);
             if( name_len )
             {
@@ -166,22 +156,19 @@ void FMRadio_SetRDSData(fmhal_data* data)
     }
 }
 
-int rdslistener_callback(void* _data, void *_param)
+int rdslistener_callback(fmEvent_t const *event, void *_param)
 {
     int result;
-    fmhal_data *data = reinterpret_cast<fmhal_data*>(_data);
 
-    if ( data )
+    if ( event )
     {
-        if ( data->fmEvent == RDS_EVENT )
+        if ( event->rdsEvent.fmEvent == RDS_EVENT )
         {
-            //dump_rdsdata(data);
-
-            FMRadio_SetRDSData(data);
+            FMRadio_SetRDSData(&event->rdsEvent);
         }
         else
         {
-            ALOGI("rdslistener_callback() : received an unknown event (%d)!\n", data->fmEvent);
+            ALOGI("rdslistener_callback() : received an unknown event (%d)!\n", event->fmEvent);
         }
         result = FM_SUCCESS;
     }
@@ -639,6 +626,21 @@ int FmRadioController :: SetMono()
     return FMSequence_SetMonoAudioMode(1);
 }
 
+//Emphasis:
+//75microsec: 0, 50 microsec: 1
+//return FM_SUCCESS on success, FM_FAILURE
+//on failure
+int FmRadioController::SetDeConstant(long emphasis)
+{
+    return FMSequence_SetDemphasis(emphasis);
+}
+
+int FmRadioController::ScanList(uint16_t *scan_tbl, int *max_cnt)
+{
+    *max_cnt = 0;
+    return FM_SUCCESS;
+}
+
 //////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////
@@ -653,24 +655,8 @@ struct timespec FmRadioController :: set_time_out(int secs)
     return ts;
 }
 
-//Emphasis:
-//75microsec: 0, 50 microsec: 1
-//return FM_SUCCESS on success, FM_FAILURE
-//on failure
-int FmRadioController::SetDeConstant(long emphasis)
-{
-    //return FM_FAILURE;
-    return FMSequence_SetDemphasis(emphasis);
-}
-
 int FmRadioController::GetStationList(uint16_t *scan_tbl, int *max_cnt)
 {
-    return FM_FAILURE;
-}
-
-int FmRadioController::ScanList(uint16_t *scan_tbl, int *max_cnt)
-{
-    *max_cnt = 0;
     return FM_FAILURE;
 }
 
