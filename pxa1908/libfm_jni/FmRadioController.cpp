@@ -74,7 +74,7 @@ static struct
     char ps[MAX_PS_LEN+1];
     char rt[MAX_RT_LEN+1];
     int32_t channel;
-} rdsData = {0};
+} rdsData;
 
 int RemoveBlank(char *str, int len)
 {
