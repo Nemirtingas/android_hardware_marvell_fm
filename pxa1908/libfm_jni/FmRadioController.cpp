@@ -73,7 +73,8 @@ static struct
     int8_t type;
     char ps[MAX_PS_LEN+1];
     char rt[MAX_RT_LEN+1];
-} rdsData;
+    int32_t channel;
+} rdsData = {0};
 
 int RemoveBlank(char *str, int len)
 {
@@ -98,13 +99,13 @@ void FMRadio_SetRDSData(fmRDSEvent_t* data)
     if( data )
     {
         pthread_mutex_lock(&using_rdsData);
-        memset(&rdsData, 0, sizeof(rdsData));
 
         if( data->psData && data->serviceName[0] )
         {
             name_len = RemoveBlank(data->serviceName, MAX_PS_LEN);
             if( name_len )
             {
+                memset(rdsData.ps, 0, sizeof(rdsData.ps));
                 rdsData.type |= PSDATA;
                 strncpy(rdsData.ps, data->serviceName, name_len);
             }
@@ -114,6 +115,7 @@ void FMRadio_SetRDSData(fmRDSEvent_t* data)
             name_len = RemoveBlank(data->radioText, MAX_RT_LEN);
             if( name_len )
             {
+                memset(rdsData.rt, 0, sizeof(rdsData.rt));
                 rdsData.type |= RTDATA;
                 strncpy(rdsData.rt, data->radioText, name_len);
             }
@@ -147,10 +149,17 @@ int rdslistener_callback(fmEvent_t const *event, void *_param)
     return result;
 }
 
-int aflistener_callback(void* _data)
+void aflistener_callback(const fmAfNotification_t * notif)
 {
-    ALOGE("FM %s in", __func__);
-    return FM_SUCCESS;
+    ALOGI("AF notification : state = %d, channel = %d, success = %d", notif->state, notif->channel, (int)notif->success);
+    if( notif->state == 1 && notif->success )
+    {
+        pthread_mutex_lock(&using_rdsData);
+
+        rdsData.channel = notif->channel;
+
+        pthread_mutex_unlock(&using_rdsData);
+    }
 }
 
 int exceptionlistener_callback(void* _data)
@@ -174,6 +183,7 @@ FmRadioController::FmRadioController():
     is_rds_support = true;
     is_af_jump_received = false;
     mutex_fm_state = PTHREAD_MUTEX_INITIALIZER;
+    mutex_ps_rt = PTHREAD_MUTEX_INITIALIZER;
     processing_rds = false;
 
     LoadSoftMuteControl();
@@ -534,7 +544,9 @@ int FmRadioController::ReadRDS()
             {
                 if( radio_name != rdsData.ps )
                 {
+                    pthread_mutex_lock(&mutex_ps_rt);
                     radio_name = rdsData.ps;
+                    pthread_mutex_unlock(&mutex_ps_rt);
                     ret |= RDS_EVT_PS_UPDATE;
                     is_ps_event_received = true;
                 }
@@ -543,7 +555,9 @@ int FmRadioController::ReadRDS()
             {
                 if( radio_text != rdsData.rt )
                 {
+                    pthread_mutex_lock(&mutex_ps_rt);
                     radio_text = rdsData.rt;
+                    pthread_mutex_unlock(&mutex_ps_rt);
                     ret |= RDS_EVT_RT_UPDATE;
                     is_rt_event_received = true;
                 }
@@ -561,8 +575,11 @@ int FmRadioController :: Get_ps(char *ps, int *ps_len)
 {
     if( !is_ps_event_received ) return FM_FAILURE;
 
+    pthread_mutex_lock(&mutex_ps_rt);
     strncpy(ps, radio_name.c_str(), MAX_PS_LEN);
     *ps_len = MIN(MAX_PS_LEN, radio_name.length());
+    pthread_mutex_unlock(&mutex_ps_rt);
+
     ps[*ps_len] = '\0';
 
     ALOGE("%s: PS = %s", "Get_ps", ps);
@@ -574,8 +591,11 @@ int FmRadioController :: Get_rt(char *rt, int *rt_len)
 {
     if( !is_rt_event_received ) return FM_FAILURE;
 
+    pthread_mutex_lock(&mutex_ps_rt);
     strncpy(rt, radio_text.c_str(), MAX_RT_LEN);
     *rt_len = MIN(MAX_RT_LEN, radio_text.length());
+    pthread_mutex_unlock(&mutex_ps_rt);
+
     rt[*rt_len] = 0;
 
     ALOGE("%s: RT = %s", "Get_rt", rt);
@@ -660,24 +680,7 @@ int FmRadioController::ScanList(uint16_t *scan_tbl, int *max_cnt)
     return res;
 }
 
-//////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////
-
-int FmRadioController::GetStationList(uint16_t *scan_tbl, int *max_cnt)
-{
-    return FM_FAILURE;
-}
-
-long FmRadioController :: GetCurrentRSSI(void)
-{
-    return FM_FAILURE;
-}
-
-int FmRadioController :: Antenna_Switch(int antenna)
+int FmRadioController::Antenna_Switch(int antenna)
 {
     return FM_SUCCESS;
 }

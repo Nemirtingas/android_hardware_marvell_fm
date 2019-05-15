@@ -46,6 +46,7 @@ class FmRadioController
         bool is_rt_event_received = false;
         bool is_af_jump_received = false;
         pthread_mutex_t mutex_fm_state;
+        pthread_mutex_t mutex_ps_rt;
         char rds_enabled;
         bool processing_rds;
 
@@ -56,7 +57,6 @@ class FmRadioController
         void ClearRDSData();
         void set_fm_state(int state);
         int get_fm_state(void);
-        int GetStationList(uint16_t *scan_tbl, int *max_cnt);
 
         int EnableRDS(void);
         int DisableRDS(void);
@@ -70,7 +70,6 @@ class FmRadioController
         int MuteOn(void);
         int MuteOff(void);
 
-        long GetCurrentRSSI(void);
         void LoadSoftMuteControl();
 
     public:
