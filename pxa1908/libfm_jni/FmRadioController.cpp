@@ -66,6 +66,7 @@ enum RDS_TYPE
 {
     PSDATA = 0x01, // the radio name
     RTDATA = 0x02, // the radio text
+    AFDATA = 0x04, // AF Jump event
 };
 
 static struct
@@ -151,12 +152,13 @@ int rdslistener_callback(fmEvent_t const *event, void *_param)
 
 void aflistener_callback(const fmAfNotification_t * notif)
 {
-    ALOGI("AF notification : state = %d, channel = %d, success = %d", notif->state, notif->channel, (int)notif->success);
+    ALOGD("AF notification : state = %d, channel = %d, success = %d", notif->state, notif->channel, (int)notif->success);
     if( notif->state == 1 && notif->success )
     {
         pthread_mutex_lock(&using_rdsData);
 
         rdsData.channel = notif->channel;
+        rdsData.type |= AFDATA;
 
         pthread_mutex_unlock(&using_rdsData);
     }
@@ -164,7 +166,7 @@ void aflistener_callback(const fmAfNotification_t * notif)
 
 int exceptionlistener_callback(void* _data)
 {
-    ALOGE("FM %s in", __func__);
+    ALOGD("FM %s in", __func__);
     return FM_SUCCESS;
 }
 
@@ -562,6 +564,15 @@ int FmRadioController::ReadRDS()
                     is_rt_event_received = true;
                 }
             }
+            if( rdsData.type & AFDATA )
+            {
+                if( prev_freq != rdsData.channel )
+                {
+	            prev_freq = rdsData.channel;
+                    ret |= RDS_EVT_AF_JUMP;
+		    is_af_jump_received = true;
+                }
+            }
 
             pthread_mutex_unlock(&using_rdsData);
             processing_rds = false;
@@ -578,11 +589,10 @@ int FmRadioController :: Get_ps(char *ps, int *ps_len)
     pthread_mutex_lock(&mutex_ps_rt);
     strncpy(ps, radio_name.c_str(), MAX_PS_LEN);
     *ps_len = MIN(MAX_PS_LEN, radio_name.length());
+    is_ps_event_received = false;
     pthread_mutex_unlock(&mutex_ps_rt);
 
     ps[*ps_len] = '\0';
-
-    ALOGE("%s: PS = %s", "Get_ps", ps);
 
     return FM_SUCCESS;
 }
@@ -594,11 +604,10 @@ int FmRadioController :: Get_rt(char *rt, int *rt_len)
     pthread_mutex_lock(&mutex_ps_rt);
     strncpy(rt, radio_text.c_str(), MAX_RT_LEN);
     *rt_len = MIN(MAX_RT_LEN, radio_text.length());
+    is_rt_event_received = false;
     pthread_mutex_unlock(&mutex_ps_rt);
 
     rt[*rt_len] = 0;
-
-    ALOGE("%s: RT = %s", "Get_rt", rt);
 
     return FM_SUCCESS;
 }
